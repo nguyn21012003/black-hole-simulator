@@ -1,6 +1,6 @@
 import numpy as np
 import pygame
-from numpy import cos, hypot, sin, sqrt
+from numpy import cos, hypot, r_, sin, sqrt
 from OpenGL.GL import (
     GL_COLOR_BUFFER_BIT,
     GL_DEPTH_BUFFER_BIT,
@@ -92,31 +92,43 @@ class BlackHole:
 
 class Photon:
 
-    def __init__(self, pos: Vector2, dir: Vector2):
+    def __init__(self, pos: Vector2, dir: Vector2, r_s):
         self.x = pos.x
         self.y = pos.y
         self.r = hypot(self.x, self.y)
         self.dir = dir
         self.phi = np.arctan2(pos.y, pos.x)
+        self.r_s = r_s
 
-        self.dr = self.dir.x
-        self.dphi = self.dir.y
+        # self.dr = self.dir.x
+        # self.dphi = self.dir.y
 
         self.dr = c * cos(self.phi) + self.dir.y * sin(self.phi)
-        self.dphi = (-c * sin(self.phi) + self.dir.y * cos(self.phi)) / self.r
-        self.d2r = 0
-        self.d2phi = 0
+        self.dphi = (-self.dir.x * sin(self.phi) + self.dir.y * cos(self.phi)) / self.r
+        # self.dphi = (-c * sin(self.phi) + self.dir.y * cos(self.phi)) / self.r
+
+        # Conserve quantities
+        self.L = self.r**2 * self.dphi
+        self.f = 1.0 - r_s / self.r
+        self.dt_dlambda = sqrt((self.dr**2) / (self.f**2) + (self.r**2 * self.dphi**2) / self.f)
+        self.E = self.f * self.dt_dlambda
+
+        # self.d2r = 0
+        # self.d2phi = 0
         self.trail = []
 
     def infor(self):
         print("Information of photon", self.x)
 
     def drawPhoton(self):
+        #### Draw phonons as dot
         # glPointSize(5)
         # glBegin(GL_POINTS)
         # glColor3f(1, 1, 1)
         # glVertex2f(self.x, self.y)
         # glEnd()
+
+        #### Draw phonons as line
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_COLOR)
         glLineWidth(2)
@@ -134,7 +146,8 @@ class Photon:
         glEnd()
         glDisable(GL_BLEND)
 
-    def step(self, r_s, dlambda):
+    def step(self, dlambda, r_s):
+        #### Use polar coordinate
         self.r_s = r_s
         self.dlambda = dlambda
 
@@ -142,32 +155,42 @@ class Photon:
         if self.r < r_s:
             return
 
-        self.dr += self.d2r * dlambda
-        self.dphi += self.d2phi * dlambda
-
-        self.r += self.dr * dlambda
-        self.phi += self.dphi * dlambda
-
-        # self.x += self.dir.x * c * 1e0
-        # self.y += self.dir.y * c * 1e0
+        photonState_n1 = rk4(self, dlambda, r_s)
 
         self.x = cos(self.phi) * self.r
         self.y = sin(self.phi) * self.r
 
+        #### Use cartesian coordinate
+        # self.x += self.dir.x * c * 1e0
+        # self.y += self.dir.y * c * 1e0
+
         self.trail.append(Vector2(self.x, self.y))
 
 
-def geodesics(Photon, r_s):
+def geodesics(photonState, yn, r_s):
 
-    r = Photon.r
-    phi = Photon.phi
-    dr = Photon.dr
-    dphi = Photon.dphi
+    r = photonState.r
+    phi = photonState.phi
+    dr = photonState.dr
+    dphi = photonState.dphi
+    E = photonState.E
+    f = photonState.f
 
-    Photon.dr += r * dphi**2 - (c**2 * r_s) / (2 * r**2)
-    Photon.dphi += -2 * dr * dphi / r
+    yn[0] = dr
+    yn[1] = dphi
+    dt_dlambda = E / f
+    yn[2] = -(r_s / (2 * r * r)) * f * dt_dlambda * dt_dlambda + (r_s / (2 * r * r * f)) * (dr * dr) + (r - r_s) * dphi * dphi
+    yn[3] = -2 * dr * dphi / r
 
-    return
+    return yn
+
+
+def rk4(Photon, h, r_s):
+
+    yn = np.zeros(4)
+    k1 = geodesics(Photon, yn, r_s)
+
+    pass
 
 
 def main():
@@ -179,8 +202,11 @@ def main():
 
     for y in range(-int(engine.height), int(engine.height), int(1e10)):
         photons.append(
-            Photon(Vector2(-10e10, y), Vector2(0.5, 0.0)),
+            Photon(Vector2(-10e10, y), Vector2(0.5, 0.0), black_hole.r_s),
         )
+
+    fArr = np.zeros(4)
+
     running = True
     while running:
         for event in pygame.event.get():
@@ -190,6 +216,11 @@ def main():
         engine.run()
         black_hole.drawOGL()
         for photon in photons:
+            fArr[0] = photon.r
+            fArr[1] = photon.phi
+            fArr[2] = photon.dr
+            fArr[3] = photon.dphi
+
             geodesics(photon, black_hole.r_s)
             photon.step(black_hole.r_s, 1)
             photon.drawPhoton()
